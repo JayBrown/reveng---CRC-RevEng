@@ -1,0 +1,450 @@
+*| dfsfix.txt
+*| Greg Cook, 30 March 2020
+*|
+*| This assembles a small utility for the BBC Micro (or Master series)
+*| computer which installs itself between the Acorn Disc Filing System
+*| firmware (Acorn DFS) and the public filing system call points,
+*| providing an enhanced filing system interface.
+*| The new interface is useful to all programs, but when a simple
+*| RISC OS program using the ANSI C Library is run on an attached Sprow
+*| ARM7TDMI Coprocessor with its built-in ARM Tube OS firmware, DFSfix
+*| emulates just enough of RISC OS's FileSwitch API for the program to
+*| read and write files to Acorn DFS discs through the ARM Tube OS.
+*|
+*| Functions performed:
+*| OSFILE: translates A=7, A=11 to A=0; translates A=9 to A=1.
+*| OSARGS: A=3, Y>0 sets the EXT (extent, length) of an open file.
+*| OSGBPB: clears the EOF warning flag on exit when A=1..4.
+*|         If DFS returns A>0, optionally sets C=1 or C=(L>0).
+*| OSFIND: passes only b7..6 of A to DFS.  Raises "Not found" error iff
+*|         b6, b3 are both set and DFS returns A=0 (no file handle.)
+*|
+*| Caveats:
+*|   A is undefined on exit from OSARGS 3,Y.
+*|   The underlying OSARGS and OSGBPB are expected to raise an error
+*|   if the file handle is invalid.
+*|   Installing DFSfix over a filing system other than its intended FS
+*|   results in undefined behaviour.
+*|   Installing DFSfix twice without pressing BREAK hangs the machine.
+*|
+*| Recommended assembly options:
+*|   15D7,Y,N,Y,S,Y,Y (266 byte image, 481 byte file)
+*|
+*| Assembly options:
+*| Address (&1500): &
+*|   Assemble DFSfix starting at this address.  Press RETURN to use the
+*|   default address of &1500, or type a hexadecimal address (after the
+*|   &) and then press RETURN.
+*|   Where DFSfix resides determines which of the BBC Micro's facilities
+*|   remain available.
+*|   DFSfix can be placed for instance at:-
+*|      &B00, in place of function key expansions
+*|      &C00, in place of user-defined characters
+*|     &1500, in place of sector buffer &14..15
+*|     &1600, in place of sector buffer &15
+*|     &1900, in place of programs that run at &1900
+*|            (set PAGE=&1B00 to run BASIC programs with minimal
+*|            disruption)
+*|     &7A00, in place of graphics display modes (must set HIMEM=&7A00)
+*|   Thus an assembly address of &1500 leaves file handles &11..&13 free.
+*|   DFSfix without options assembles to 208 bytes of routines + 41 byte
+*|   installer erasable after use = 249 bytes (&F9).
+*|   The address need not be page-aligned.
+*|   You must ensure that neither the code nor the generated image file
+*|   will overwrite critical memory areas.
+*|
+*| Installer first? (Y/N):
+*|   Typing Y places the installer before the routines.  This usually
+*|   causes the execution address to equal the load address.
+*|
+*| OSARGS 3,Y to test MSB? (Y/N):
+*|   Typing Y adds 12 bytes.
+*|   Treats the parameter to OSARGS 3,Y as a 24-bit (N) or 32-bit (Y)
+*|   quantity.  In the latter case, a request with any of the top 8 bits
+*|   set raises a "Can't extend" error.
+*|   With N a pointer prepared for a 24-bit implementation of OSARGS 1,Y
+*|   can also be passed to OSARGS 3,Y.  The Y option however enables
+*|   strict compliance with the DFS and RISC OS APIs.
+*|
+*| OSARGS 3,Y to clamp PTR? (Y/N):
+*|   Typing Y adds 14 bytes.
+*|   With N, calls to OSARGS 3,Y leave a file's pointer unchanged after
+*|   setting the length, and so the pointer may sometimes be left far
+*|   beyond the end of the file.
+*|   This is a normal condition in some filing systems, where setting
+*|   PTR makes no changes to the file and only takes effect on the next
+*|   read or write.  N would be the correct choice with such filing
+*|   systems, where OSARGS 3,Y may be expected not to alter the pointer.
+*|   However the RISC OS PRM defines that setting EXT shall leave PTR
+*|   pointing to the end-of-file or before.  Y is the proper choice for
+*|   use with RISC OS applications, which have this expectation, and/or
+*|   Acorn DFS, which enforces this condition at all times.
+*|   Otherwise, you may choose N and then refrain from performing any
+*|   length adjustment that would leave the pointer 'dangling'.
+*|   Fortunately, RISC OS programs that just write files sequentially
+*|   only zero a file's length initially, when the pointer is also zero.
+*|
+*| C if OSGBPB returns A>0:-
+*| Preserve / Set / Set iff L>0 (P/S/L):
+*|   Typing S adds 3 bytes, typing L adds 17 bytes.
+*|   Tells DFSfix what to do with the carry flag when the underlying
+*|   OSGBPB routine returns a nonzero A register.  This implies an
+*|   illegal use of A, an unimplemented OSGBPB call, or a filing system
+*|   that implements the call but improperly preserves the call number.
+*|   With P, DFSfix does not interfere, passing whatever carry flag
+*|   (and accumulator) was returned from OSGBPB.
+*|   With S, DFSfix returns C=1; the user can then tell solely from C=1
+*|   that there was a problem with his or her call.
+*|   With L, DFSfix sets C=1 if the length field at XY+5..8 indicates
+*|   that one or more bytes were not transferred, C=0 otherwise.
+*|
+*| Save? (Y/N):
+*|   Type Y to save DFSfix to disc as well or N to generate only the
+*|   assembly listing.
+*|
+*| Page aligned file? (Y/N):
+*|   Type Y to save DFSfix starting at a page boundary.
+*|   Type N to save DFSfix starting at the code.
+*|   Where the code is page aligned, the option is not given.
+
+*BASIC
+NEW
+AUTO
+REM >A.DFSFIX
+REM Greg Cook 27/Mar/2020 17:10
+
+REM Reportedly unused space in the Econet area
+REM http://mdfs.net/Docs/Comp/BBC/AllMem
+tempptr=&93
+REM OSARGS 3,Y and OSGBPB will not cause themselves or each other to be called
+ptr=&93
+os_vector_base=&200
+os_filev=&212
+os_argsv=&214
+os_gbpbv=&21A
+os_findv=&21C
+os_softkey_buffer=&B00
+osbput=&FFD4
+osfile=&FFDD
+
+base%=FNgethex("Address (&1500): &",&1500)
+PRINT"Installer first? ";:installer_first%=FNyesno
+PRINT"OSARGS 3,Y to test MSB? ";:args32%=FNyesno
+PRINT"OSARGS 3,Y to clamp PTR? ";:clampptr%=FNyesno
+PRINT"C if OSGBPB returns A>0:-"'"Preserve / Set / Set iff L>0 (P/S/L):";
+REPEAT input%=INSTR(" PpSsLl",GET$)DIV 2:UNTIL input%>0
+PRINT MID$("PSL",input%,1)
+IF input%=1 THEN preserve%=1:test_length%=0
+IF input%=2 THEN preserve%=0:test_length%=0
+IF input%=3 THEN preserve%=0:test_length%=1
+
+channel_ro_flag=&110C
+channel_lock_flag=&110E
+channel_ext=&1114
+channel_buffer_flag=&1117
+channel_eof_warning_mask%=&EF
+channel_ext_changed%=&20
+
+pass1%=0:pass2%=3
+
+DIM osblock% 19, filename% 255
+FOR pass%=pass1% TO pass2% STEP pass2%-pass1%
+P%=base%
+REM IF base%=os_softkey_buffer THEN PROCasm_softkey_indices
+IF installer_first% THEN PROCasm_installer
+PROCasm_routines
+IF installer_first% ELSE PROCasm_installer
+NEXT
+
+PRINT '"Save? ";:IF FNyesno THEN PROCsave
+END
+
+DEF FNgethex(prompt$,default%)
+LOCAL input$,good%,iter%
+REPEAT
+REPEAT
+PRINT prompt$;
+INPUT "" input$
+UNTIL LEN(input$) <=8
+good%=TRUE
+FOR iter%=1 TO LEN(input$)
+good%=good% AND INSTR("0123456789ABCDEF",MID$(input$,iter%,1))>0
+NEXT
+UNTIL good%
+IF LEN(input$)=0 =default%
+=EVAL("&"+input$)
+
+DEF FNyesno
+LOCAL input%
+PRINT "(Y/N):";
+REPEAT
+input%=INSTR(" NnYy",GET$)DIV 2
+UNTIL input%>0
+IF input%=2 PRINT "yes" ELSE PRINT "no"
+=input%=2
+
+DEF PROCasm_softkey_indices
+routines_end=routines_end
+PROCequs(STRING$(17,CHR$(routines_end-base%-1)))
+ENDPROC
+
+DEF PROCequs(A$)
+$P%=A$
+P%=P%+LENA$
+ENDPROC
+
+DEF PROCequb(A%)
+?P%=A%
+P%=P%+1
+ENDPROC
+
+DEF PROCasm_installer
+[OPT pass%
+.install
+LDX #os_filev-os_vector_base
+LDY #filewrap_jmp+1-routines
+JSR install_hook
+\LDX #os_argsv-os_vector_base
+LDY #argswrap_jmp+1-routines
+JSR install_hook
+LDX #os_gbpbv-os_vector_base
+LDY #gbpbwrap_jsr+1-routines
+JSR install_hook
+\LDX #os_findv-os_vector_base
+LDY #findwrap_jsr+1-routines
+.install_hook
+JSR install_hook_byte
+.install_hook_byte
+LDA routines,Y
+PHA
+LDA os_vector_base,X
+STA routines,Y
+PLA
+STA os_vector_base,X
+INX
+INY
+RTS
+.install_end
+]
+ENDPROC
+
+DEF PROCasm_routines
+[OPT pass%
+.routines
+.routines_clear_eof_warning
+ASL A
+ASL A
+ASL A
+ASL A
+ASL A
+TAY
+LDA channel_buffer_flag,Y
+AND #channel_eof_warning_mask%
+STA channel_buffer_flag,Y
+RTS
+:
+.filewrap_0
+LDA #9 EOR 1 EOR 0
+.filewrap_1
+EOR #9 EOR 1
+.filewrap
+CMP #7
+BEQ filewrap_0
+CMP #9
+BEQ filewrap_1
+CMP #11
+BEQ filewrap_0
+.filewrap_jmp
+JMP filewrap
+:
+]
+IF clampptr% THEN [OPT pass%:.argswrap_ply_set_ptr:PLA:TAY:]
+[OPT pass%
+.argswrap_set_ptr
+LDA #1
+.argswrap_jmp
+JMP argswrap
+:
+.argswrap
+CMP #3
+BNE argswrap_jmp
+CPY #1
+BCC argswrap_jmp
+CLC
+.argswrap_temp_ptr
+TXA
+PHA
+LDA #0
+ROL A
+LDX #tempptr
+JSR argswrap_jmp
+PLA
+TAX
+TYA
+PHA
+JSR routines_clear_eof_warning
+]
+IF args32% THEN PROCasm_args32_1
+[OPT pass%
+LDA channel_ext,Y \EXT - request
+CMP 0,X
+LDA channel_ext+1,Y
+SBC 1,X
+LDA channel_ext+2,Y
+SBC 2,X
+BCC argswrap_extend \if EXT < request then extend
+LDA channel_ro_flag,Y
+ORA channel_lock_flag,Y
+BMI argswrap_truncate \if read-only channel don't write new EXT to catalogue
+LDA channel_buffer_flag,Y
+ORA #channel_ext_changed%
+STA channel_buffer_flag,Y
+.argswrap_truncate
+LDA 2,X
+STA channel_ext+2,Y
+LDA 1,X
+STA channel_ext+1,Y
+LDA 0,X
+STA channel_ext,Y
+]
+IF clampptr% THEN PROCasm_clampptr
+IF args32% THEN PROCasm_args32_2
+[OPT pass%
+.argswrap_extend \on entry C=0 to extend, C=1 to return EXT; request > EXT >= 0
+PLA
+TAY
+LDA #2
+BCS argswrap_jmp
+LDA 0,X
+BNE argswrap_dec_1
+LDA 1,X
+BNE argswrap_dec_2
+DEC 2,X
+.argswrap_dec_2
+DEC 1,X
+.argswrap_dec_1
+DEC 0,X
+JSR argswrap_set_ptr
+LDA #0
+JSR osbput
+JSR argswrap_jmp
+SEC
+BCS argswrap_temp_ptr
+:
+.gbpbwrap
+STA ptr
+STY ptr+1
+.gbpbwrap_jsr
+JSR gbpbwrap
+TAY
+]
+IF preserve% THEN [OPT pass%:BNE gbpbwrap_quit:]
+IF test_length% THEN [OPT pass%:BNE gbpbwrap_test_length:]
+IF test_length% OR preserve% ELSE [OPT pass%:BNE gbpbwrap_sec_quit:]
+[OPT pass%
+PHP
+LDA #4
+CMP ptr
+BCC gbpbwrap_plp
+STX ptr
+LDA (ptr),Y
+JSR routines_clear_eof_warning
+LDA #0
+.gbpbwrap_plp
+PLP
+.gbpbwrap_quit
+LDY ptr+1
+.gbpbwrap_exit
+RTS
+]
+IF test_length% THEN PROCasm_gbpbwrap_test_length
+IF test_length% OR preserve% ELSE [OPT pass%:.gbpbwrap_sec_quit:SEC:BCS gbpbwrap_quit:]
+[OPT pass%
+:
+.findwrap
+PHA
+AND #&48
+CMP #&48
+PLA
+PHP
+AND #&C0
+.findwrap_jsr
+JSR findwrap
+PLP
+EOR #0
+BNE gbpbwrap_exit
+BCC gbpbwrap_exit
+BRK
+]
+PROCequb(&D6)
+PROCequs("Not found")
+PROCequb(&00)
+[OPT pass%
+.routines_end
+]
+ENDPROC
+
+DEF PROCasm_args32_1
+[OPT pass%
+\treat parameter as 32 bits
+LDA #0
+CMP 3,X
+BCC argswrap_extend_max
+]
+ENDPROC
+
+DEF PROCasm_clampptr
+[OPT pass%
+\clamp PTR
+\request - PTR
+CMP tempptr
+LDA 1,X
+SBC tempptr+1
+LDA 2,X
+SBC tempptr+2
+BCC argswrap_ply_set_ptr \if request < PTR set PTR = request
+]
+ENDPROC
+
+DEF PROCasm_args32_2
+[OPT pass%
+.argswrap_extend_max \on entry C=0, A=0 to extend to maximum, C=1 to return EXT
+STA 0,X
+\LDA #&FF
+STA 1,X
+STA 2,X
+]
+ENDPROC
+
+DEF PROCasm_gbpbwrap_test_length
+[OPT pass%
+.gbpbwrap_test_length
+PHA
+STX ptr
+LDY #9
+.gbpbwrap_test_length_byte
+DEY
+CPY #5
+BCC gbpbwrap_test_length_quit
+LDA (ptr),Y
+BEQ gbpbwrap_test_length_byte
+.gbpbwrap_test_length_quit
+PLA
+BNE gbpbwrap_quit
+]
+ENDPROC
+
+DEF PROCsave
+LOCAL A%,X%,Y%
+X%=osblock%
+Y%=X% DIV 256
+$filename%="dfsfix"
+!osblock%=filename%
+osblock%!2=&FFFF0000 OR base%
+osblock%!6=&FFFF0000 OR install
+osblock%!10=base%
+IF osblock%?2 THEN PRINT "Page aligned file? ";:IF FNyesno THEN osblock%?2=0:osblock%?10=0
+osblock%!14=P%
+A%=0
+CALL osfile
+ENDPROC

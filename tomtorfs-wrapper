@@ -1,0 +1,63 @@
+#!/bin/sh
+# tomtorfs-wrapper
+# Greg Cook, 20/Nov/2019
+
+# CRC RevEng: arbitrary-precision CRC calculator and algorithm finder
+# Copyright (C) 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018,
+# 2019  Gregory Cook
+#
+# This file is part of CRC RevEng.
+#
+# CRC RevEng is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# CRC RevEng is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with CRC RevEng.  If not, see <https://www.gnu.org/licenses/>.
+
+# Replacement for the 'tomtorfs' CRC calculator, used in CRC examples
+# on the Computer Interfacing Forum and elsewhere.
+#
+# INSTALLATION:
+#	chmod a+x tomtorfs-wrapper
+#	sudo cp tomtorfs-wrapper /usr/local/bin
+#	sudo ln -s tomtorfs-wrapper /usr/local/bin/tomtorfs
+#
+# USAGE:
+#	tomtorfs		FILE WIDTH POLY REFL INIT XOROUT
+#	tomtorfs-wrapper	FILE WIDTH POLY REFL INIT XOROUT
+#
+# FILE is a filename; WIDTH is a decimal integer. All other arguments
+# are hexadecimal integers, optionally beginning with '0x'.
+#
+# Translates the tomtorfs command to the equivalent CRC RevEng command
+# and executes it, calculating a CRC on the contents of FILE.
+# If invoked as 'tomtorfs-wrapper', prints the equivalent reveng command
+# line to standard error before execution.
+# For information on the arguments and their meanings, study the
+# translated command lines with reference to the CRC RevEng user guide.
+#
+# REFERENCES:
+# Greg Cook, CRC RevEng user guide.
+#   <http://reveng.sourceforge.net/readme.htm>
+# Lammert Bies, "Error detection and correction" Web forum.
+#   <https://www.lammertbies.nl/forum/viewforum.php?f=11>
+# Tom Torfs, IOCCC winning entry, 1998, CRC generator.
+#   <https://www.ioccc.org/years.html#1998_tomtorfs>
+
+REVENG="reveng"
+PROG=${0##*/}
+
+REFL="-b -B"
+[ "$4" -gt "0" ] && REFL="-l -L"
+
+[ "$PROG" = "tomtorfs" ] || \
+	echo "$REVENG" -A "$2" -w "$2" -p "$3" -i "$5" $REFL -x "$6" \
+		-c -X -f "$1" >&2
+"$REVENG" -A "$2" -w "$2" -p "$3" -i "$5" $REFL -x "$6" -c -X -f "$1"
