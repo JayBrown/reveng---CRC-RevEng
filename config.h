@@ -64,6 +64,8 @@
 
 /* #define PRESETS  1 */
 
+#define PRESETS  1 */
+
 /* Macros defining the size of a bmp_t.
  * Their values only matter if PRESETS and/or BMPMACRO are defined, in
  * which case edit the macros below to suit your architecture.
@@ -73,13 +75,13 @@
 
 /* Size in bits of a bmp_t.  Not necessarily a power of two. */
 
-#define BMP_BIT   32
+#define BMP_BIT   64
 
 /* The highest power of two that is strictly less than BMP_BIT.
  * Initialises the index of a binary search for set bits in a bmp_t.
  */
 
-#define BMP_SUB   16
+#define BMP_SUB   32
 
 /*****************************************
  *					 *
